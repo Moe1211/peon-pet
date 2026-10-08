@@ -1,8 +1,23 @@
 import * as THREE from '../node_modules/three/build/three.module.js';
+import { ThinkingOrb } from './vendor/thinking-orbs.js';
+import { ANIM_TO_ORB, ORB_COLORS, orbStateForTool } from './orb-state.js';
 
 // --- Config ---
 const ATLAS_COLS = 6;
 const ATLAS_ROWS = 6;
+
+// Pet visuals: the sprite is retired in favour of a JARVIS-style thinking orb.
+// State machine (playAnim) and session dots are reused unchanged.
+const ORB_SIZE_MAIN = 128;
+const ORB_SIZE_SUB  = 64;
+// Classic (dotted) variant encodes depth as brightness, so scale the tint by
+// the gray value — colour + shading, not a flat wash. Hooked from the
+// vendored renderer's grayscale fills (see thinking-orbs.js).
+globalThis.__peonOrbTintRGBA = (gray, alpha) => {
+  const [r, g, b] = (globalThis.__peonOrbInk || '250,250,250').split(',').map(Number);
+  const k = gray / 255;
+  return `rgba(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)},${alpha})`;
+};
 
 const ANIM_CONFIG = {
   sleeping:  { row: 0, frames: 6, fps: 3,  loop: true  },
@@ -28,6 +43,17 @@ const scene = new THREE.Scene();
 
 const camera = new THREE.OrthographicCamera(-100, 100, 100, -100, 0.1, 10);
 camera.position.z = 1;
+
+// --- Thinking orb (the pet) ---
+globalThis.__peonOrbInk = ORB_COLORS.idle;
+const orb = new ThinkingOrb(document.getElementById('orb'), {
+  state: 'idle',
+  size: ORB_SIZE_MAIN,
+  theme: 'dark',
+  variant: 'classic',
+  interactive: false,   // desktop pet: never capture input, drag stays on the canvas
+  ariaLabel: 'Peon Pet',
+});
 
 // --- Background ---
 const bgTex = new THREE.TextureLoader().load('peon-asset://bg.png');
@@ -104,6 +130,12 @@ const borderMesh = new THREE.Mesh(
 );
 borderMesh.position.z = 0.4;
 scene.add(borderMesh);
+
+// Orb replaces the pet sprite — hide the orc/bg/border layers; the Three.js
+// overlay (session dots, reaction flash, particle burst) stays on top.
+sprite.visible = false;
+bgMesh.visible = false;
+borderMesh.visible = false;
 
 // --- Session dots (glowing orbs) ---
 const MAX_DOTS = 10;
@@ -277,11 +309,14 @@ let remainingLoops = 0;  // extra replays for non-sleeping anims
 const REACTION_LOOPS = 3;  // play reaction animations 3x before sleeping
 let idleTimer = null;
 const IDLE_TIMEOUT_MS = 30000;
+// Agent blocked on the user (permission / plan approval). Holds 'listening'
+// and suppresses the idle→sleep decay until a resume event clears it.
+let waiting = false;
 
 function resetIdleTimer() {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    if (!isSubAgent && !anySessionActive) playAnim('sleeping');
+    if (!isSubAgent && !anySessionActive && !waiting) playAnim('sleeping');
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -301,6 +336,11 @@ function setFrame(animName, frame) {
   uv.needsUpdate = true;
 }
 
+function applyOrbState(state) {
+  orb.setState(state);
+  globalThis.__peonOrbInk = ORB_COLORS[state] ?? ORB_COLORS.working;
+}
+
 function playAnim(animName) {
   pendingIdle = false;
   if (!ANIM_CONFIG[animName]) return;
@@ -313,6 +353,7 @@ function playAnim(animName) {
   if (ANIM_FLASH[animName]) {
     ANIM_FLASH[animName]();
   }
+  applyOrbState(ANIM_TO_ORB[animName] ?? 'working');
   if (animName !== 'sleeping') {
     resetIdleTimer();
   }
@@ -415,6 +456,8 @@ let isSubAgent = false;
 
 window.peonBridge.onConfig(({ size, subAgent }) => {
   if (subAgent) isSubAgent = true;
+  // Orb scales down for the smaller sub-agent windows
+  orb.update({ size: subAgent ? ORB_SIZE_SUB : ORB_SIZE_MAIN });
   // Resize HTML body to match window
   document.documentElement.style.width = `${size}px`;
   document.documentElement.style.height = `${size}px`;
@@ -461,7 +504,25 @@ window.peonBridge.onConfig(({ size, subAgent }) => {
 // --- IPC events ---
 let anySessionActive = false;
 
-window.peonBridge.onEvent(({ anim }) => {
+window.peonBridge.onEvent((payload) => {
+  // Waiting latch — agent blocked on the user (permission / plan approval).
+  if (payload.waiting !== undefined) {
+    waiting = payload.waiting;
+    if (waiting) {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (!isSubAgent) applyOrbState('listening');
+    } else {
+      resetIdleTimer();
+    }
+    return;
+  }
+  // Tool events drive the orb directly (tool → state), bypassing the sprite
+  // state machine. The next playAnim (typing repeats while working) reclaims it.
+  if (payload.tool !== undefined) {
+    if (!isSubAgent && !waiting) applyOrbState(orbStateForTool(payload.tool, payload.command));
+    return;
+  }
+  const { anim } = payload;
   // Sub-agents only respond to the initial waking event
   if (isSubAgent && anim !== 'waking') return;
   // Don't wake if already active — only wake from sleep
@@ -540,8 +601,11 @@ function animate(time) {
             pendingIdle = true;
             setTimeout(() => {
               pendingIdle = false;
-              // Sub-agents always stay typing while alive
-              if (isSubAgent || anySessionActive) {
+              // Blocked on the user — stay lit until they answer.
+              if (waiting) {
+                applyOrbState('listening');
+              } else if (isSubAgent || anySessionActive) {
+                // Sub-agents always stay typing while alive
                 playAnim('typing');
               } else {
                 playAnim('sleeping');

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "jest",
+    "test": "jest && node --test tests/orb-state.test.mjs",
     "test:watch": "jest --watch"
   },
   "jest": {
