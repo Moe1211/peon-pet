@@ -6,8 +6,11 @@ const {
   createSessionTracker,
   buildSessionStates,
   EVENT_TO_ANIM,
+  waitingTransition,
 } = require('./lib/session-tracker');
 const { JsonlWatcher } = require('./lib/jsonl-watcher');
+const { StateWatcher } = require('./lib/state-watcher');
+const { ToolWatcher } = require('./lib/tool-watcher');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -90,6 +93,8 @@ function registerCharacterProtocol() {
 
 const tracker = createSessionTracker();
 const sessionCwds = new Map();  // session_id → cwd string
+const waitingSessions = new Set();  // sessions blocked on the user (hold 'listening')
+let lastWaitingSent = false;        // last value pushed to the renderer
 const remoteSessionIds = new Set();
 const remoteLastEvents = new Map();  // session_id → last event string
 const SESSION_PRUNE_MS = 10 * 60 * 1000;  // 10min — prune cold sessions
@@ -177,7 +182,7 @@ function destroySubAgentWindow(sessionId) {
   repositionSubAgentWindows();
 }
 
-function handleSessionEvent({ sessionId, event, cwd, timestamp }) {
+function handleSessionEvent({ sessionId, event, cwd, timestamp, tool, command }) {
   if (!isValidSessionId(sessionId)) return;
 
   const now = Date.now();
@@ -194,6 +199,7 @@ function handleSessionEvent({ sessionId, event, cwd, timestamp }) {
   if (event === 'SessionEnd') {
     tracker.remove(sessionId);
     sessionCwds.delete(sessionId);
+    waitingSessions.delete(sessionId);
   } else if (event === 'SessionSeen') {
     // File existed at startup: register with actual file mtime, no animation, no dedup
     tracker.update(sessionId, timestamp || now);
@@ -212,6 +218,10 @@ function handleSessionEvent({ sessionId, event, cwd, timestamp }) {
     if (cwd) sessionCwds.set(sessionId, cwd);
   }
 
+  const wt = waitingTransition(event);
+  if (wt === true) waitingSessions.add(sessionId);
+  else if (wt === false) waitingSessions.delete(sessionId);
+
   tracker.prune(now - SESSION_PRUNE_MS);
   for (const id of sessionCwds.keys()) {
     if (!tracker.entries().some(([sid]) => sid === id)) sessionCwds.delete(id);
@@ -222,6 +232,16 @@ function handleSessionEvent({ sessionId, event, cwd, timestamp }) {
   const anim = EVENT_TO_ANIM[event];
   if (anim && win && !win.isDestroyed()) {
     win.webContents.send('peon-event', { anim, event });
+  }
+  if (event === 'ToolUse' && win && !win.isDestroyed()) {
+    win.webContents.send('peon-event', { tool, command });
+  }
+
+  // Waiting latch — agent blocked on the user (permission / plan approval).
+  const waiting = waitingSessions.size > 0;
+  if (win && !win.isDestroyed() && waiting !== lastWaitingSent) {
+    lastWaitingSent = waiting;
+    win.webContents.send('peon-event', { waiting });
   }
 }
 
@@ -280,6 +300,19 @@ function startPolling() {
 
   watcher.start();
 
+  // peon-ping state — the only source that sees non-Claude sessions
+  // (OpenCode via Paseo, Cursor, …). Claude sessions are skipped inside.
+  const stateWatcher = new StateWatcher();
+  stateWatcher.on('session-event', handleSessionEvent);
+  stateWatcher.start();
+
+  // OpenCode tool bridge — tool name/command → orb state
+  const toolWatcher = new ToolWatcher();
+  toolWatcher.on('tool', ({ tool, command }) => {
+    if (win && !win.isDestroyed()) win.webContents.send('peon-event', { tool, command });
+  });
+  toolWatcher.start();
+
   // Heartbeat: refresh session hot/warm status so the pet correctly decays.
   // Sessions with pending tools are kept hot so the pet stays awake during long tool runs.
   // Also runs the TTL sweep for sub-agent windows whose SubagentStop never fired.
@@ -289,6 +322,9 @@ function startPolling() {
       .filter(([sid, createdAt]) => now - createdAt > SUB_AGENT_TTL_MS && !dummySessionIds.has(sid))
       .map(([sid]) => sid);
     for (const sid of expired) destroySubAgentWindow(sid);
+
+    // Keep waiting sessions hot so their dot stays lit and the pet holds 'listening'.
+    for (const sessionId of waitingSessions) tracker.update(sessionId, now);
 
     if (tracker.entries().length === 0) return;
     for (const sessionId of watcher.getActiveSessionIds()) {

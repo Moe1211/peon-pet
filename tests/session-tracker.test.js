@@ -5,6 +5,7 @@ const {
   createSessionTracker,
   buildSessionStates,
   EVENT_TO_ANIM,
+  waitingTransition,
 } = require('../lib/session-tracker');
 
 // ─── isValidSessionId ─────────────────────────────────────────────────────────
@@ -32,6 +33,18 @@ describe('isValidSessionId', () => {
 
   test('rejects "test-123"', () => {
     expect(isValidSessionId('test-123')).toBe(false);
+  });
+
+  test('accepts a peon-ping OpenCode adapter id (oc-<epoch>)', () => {
+    expect(isValidSessionId('oc-1791495809676')).toBe(true);
+  });
+
+  test('accepts an opencode- prefixed id', () => {
+    expect(isValidSessionId('opencode-123')).toBe(true);
+  });
+
+  test('rejects an oc- id without digits', () => {
+    expect(isValidSessionId('oc-abc')).toBe(false);
   });
 
   test('rejects null', () => {
@@ -252,5 +265,49 @@ describe('EVENT_TO_ANIM', () => {
 
   test('unknown event returns undefined', () => {
     expect(EVENT_TO_ANIM['UnknownEvent']).toBeUndefined();
+  });
+});
+
+// ─── waitingTransition ────────────────────────────────────────────────────────
+
+describe('waitingTransition', () => {
+  test('PermissionRequest starts waiting', () => {
+    expect(waitingTransition('PermissionRequest')).toBe(true);
+  });
+
+  test('Notification starts waiting', () => {
+    expect(waitingTransition('Notification')).toBe(true);
+  });
+
+  test('UserPromptSubmit resumes', () => {
+    expect(waitingTransition('UserPromptSubmit')).toBe(false);
+  });
+
+  test('Stop resumes', () => {
+    expect(waitingTransition('Stop')).toBe(false);
+  });
+
+  test('SessionStart resumes', () => {
+    expect(waitingTransition('SessionStart')).toBe(false);
+  });
+
+  test('ToolUse resumes', () => {
+    expect(waitingTransition('ToolUse')).toBe(false);
+  });
+
+  test('PostToolUseFailure resumes', () => {
+    expect(waitingTransition('PostToolUseFailure')).toBe(false);
+  });
+
+  test('SessionEnd resumes', () => {
+    expect(waitingTransition('SessionEnd')).toBe(false);
+  });
+
+  test('PreCompact is neutral (no change)', () => {
+    expect(waitingTransition('PreCompact')).toBeNull();
+  });
+
+  test('unknown event is neutral (no change)', () => {
+    expect(waitingTransition('Whatever')).toBeNull();
   });
 });
