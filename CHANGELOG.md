@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased] — local mods (2026-10-09)
+
+Local-fork changes (not upstream). Theme: sprite → thinking orb, and react to non-Claude agents.
+
+### Added
+
+- **JARVIS thinking orb** replaces the orc sprite — the orb colour encodes state (idle,
+  connecting, working, listening, responding, solving, searching, composing, shaping). Vendored
+  `renderer/vendor/thinking-orbs.js`, tinted via `renderer/orb-state.js`.
+- **Non-Claude sessions** — `lib/state-watcher.js` polls peon-ping's `.state.json` so OpenCode
+  (via Paseo) and Cursor sessions reach the pet; `oc-<epoch>` ids accepted.
+- **OpenCode tool bridge** — `~/.config/opencode/plugins/peon-pet-tools.ts` →
+  `~/.peon-pet/tool.json` → `lib/tool-watcher.js` → orb state per tool (`read`/`edit`/`bash`/git-write/…).
+- **Waiting latch** — a permission prompt / plan approval holds the orb gold (listening) until you
+  answer, instead of decaying to thinking then sleeping.
+- **Tests** — `renderer/orb-state.js` covered by `tests/orb-state.test.mjs` (`node --test`); the
+  waiting transition is covered in the Jest suite.
+
+### Changed
+
+- `lib/session-tracker.js` — `EVENT_TO_ANIM.Stop → celebrate` (was documented as typing);
+  `waitingTransition()` added.
+- `install.sh` — use the real `Electron.app/…/Electron` binary (launchd has no `node`).
+- `renderer/app.js` — imports the pure orb mapping from `renderer/orb-state.js`.
+
+### Fixed
+
+- Pet no longer idles/sleeps while an approval is pending.
+
 ## [1.0.0-alpha] - 2026-02-18
 
 First working release of peon-pet — a desktop pet for [Peon-Ping](https://peonping.com).

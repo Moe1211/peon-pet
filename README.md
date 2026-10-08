@@ -1,6 +1,6 @@
 # peon-pet
 
-A macOS desktop pet for [Peon-Ping](https://peonping.com) — an orc that reacts to your Claude Code events with sprite animations. Built on Electron + Three.js.
+A macOS desktop pet for [Peon-Ping](https://peonping.com) — a JARVIS-style thinking orb that reacts to your Claude Code **and** OpenCode events. Built on Electron + Three.js.
 
 <video src="https://github.com/user-attachments/assets/7fd9a2cb-d227-49ad-8ccc-7953ec392a2d" autoplay loop muted playsinline width="400"></video>
 
@@ -44,21 +44,46 @@ Right-click the dock icon:
 - **Hide Pet** / **Show Pet** — toggle visibility without quitting
 - **Quit** — exit completely
 
-## Animations
+## States
 
-| Claude Code event | Animation |
+The pet is a JARVIS-style **thinking orb** (`renderer/app.js` + `renderer/orb-state.js`).
+The sprite is retired; the orb colour encodes what's happening:
+
+| State | Colour | When |
+|---|---|---|
+| idle | dim steel blue | sleeping / nothing running |
+| connecting | sky | session start / resume |
+| working | JARVIS cyan | thinking (prompt submitted, task running) |
+| listening | gold | **waiting on you** — permission / plan approval |
+| responding | aqua-green | task complete (`Stop`) |
+| solving | violet | tool failure / plain shell |
+| searching | mint | read / grep / glob / web |
+| composing | magenta | edit / write |
+| shaping | amber | subagents, or a git write (`push`/`commit`/`merge`/…) |
+
+Events (Claude Code + OpenCode via peon-ping):
+
+| Event | Orb |
 |---|---|
-| Session start / resume | Waking up (plays once) |
-| Prompt submit | Typing |
-| Task complete (Stop) | Celebrate |
-| Permission request / context compact | Alarmed |
-| Tool failure | Annoyed |
+| `SessionStart` | connecting |
+| `UserPromptSubmit` | working |
+| `Stop` | responding |
+| `PermissionRequest` / `Notification` | listening |
+| `PostToolUseFailure` | solving |
+| `PreCompact` | listening |
 
-The orc stays in typing mode while any session is actively working (event within last 30 s). Returns to sleeping after 30 s of inactivity.
+**Waiting latch:** when the agent blocks on you (permission prompt / plan approval), the orb
+holds **gold** and does not decay to thinking/sleeping until you answer — no more idling while an
+approval is pending.
+
+Tool calls drive the orb directly (`read`→searching, `edit`→composing, `bash`→solving, …; a
+`git push/commit/…` inside a shell command → shaping). See `renderer/orb-state.js`.
+
+The pet returns to **idle** after 30 s of inactivity (unless it's waiting on you).
 
 ## Session dots
 
-Up to 10 glowing orbs appear above the orc — one per tracked Claude Code session:
+Up to 10 glowing orbs appear above the pet — one per tracked session (Claude Code or OpenCode):
 
 - **Bright pulsing green** — active (event within last 30 s)
 - **Dim green** — idle (last event 30 s–2 min ago)
@@ -66,6 +91,25 @@ Up to 10 glowing orbs appear above the orc — one per tracked Claude Code sessi
 Sessions are removed when Claude Code fires `SessionEnd`, or automatically after 10 min of inactivity.
 
 Hover over a dot to see the project folder and status. Hover anywhere on the widget to see all active project names.
+
+## Non-Claude sessions (OpenCode, Cursor, …)
+
+Claude Code transcripts under `~/.claude/projects` are watched by `lib/jsonl-watcher.js`.
+Non-Claude adapters never write those, so `lib/state-watcher.js` also polls peon-ping's
+`~/.claude/hooks/peon-ping/.state.json` — the one file every adapter updates. Session ids like
+`oc-<epoch>` are accepted. The two sources are deduped: Claude UUIDs are handled by the JSONL
+watcher only.
+
+### OpenCode tool bridge
+
+OpenCode tool calls don't reach peon-ping, so a small OpenCode plugin writes the latest tool to a
+bridge file:
+
+- Plugin: `~/.config/opencode/plugins/peon-pet-tools.ts` (hooks `tool.execute.before`)
+- Bridge file: `~/.peon-pet/tool.json` → `{ session_id, tool, command, timestamp }`
+- Watcher: `lib/tool-watcher.js` polls it → IPC → orb state
+
+Independent of peon-ping's own adapter, so peon-ping upgrades won't clobber it.
 
 ## Dependencies
 
@@ -76,7 +120,7 @@ Hover over a dot to see the project folder and status. Hover anywhere on the wid
 
 ```bash
 npm run dev    # starts with DevTools detached
-npm test       # runs Jest test suite (63 tests)
+npm test       # Jest suites + node --test for the pure orb mapping
 ```
 
 Simulate an event by writing to the peon-ping state file:
@@ -98,17 +142,9 @@ json.dump(state, open(f, 'w'))
 
 Valid events: `SessionStart`, `SessionEnd`, `Stop`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUseFailure`, `PreCompact`
 
-## Sprite atlas
+## Assets
 
-The orc sprite sheet is a 6×6 pixel art atlas (`renderer/assets/orc-sprite-atlas.png`, 3072×3072). Row layout:
-
-| Row | Animation |
-|---|---|
-| 0 | Sleeping |
-| 1 | Waking |
-| 2 | Typing |
-| 3 | Alarmed |
-| 4 | Celebrate |
-| 5 | Annoyed |
-
-See `docs/sprite-atlas-prompt.md` for the generation prompt used with image models.
+The orb is drawn by the vendored `renderer/vendor/thinking-orbs.js` (see the header of that file
+for the local tint patches). The old sprite/atlas assets (`renderer/assets/*`) and the bundled
+characters (orc / capybara / hello-kitty) are retained but no longer shown — the orb replaces the
+sprite.
