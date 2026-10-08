@@ -3,17 +3,17 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ELECTRON="$SCRIPT_DIR/node_modules/.bin/electron"
+ELECTRON="$SCRIPT_DIR/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 PLIST_SRC="$SCRIPT_DIR/com.peonpet.app.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.peonpet.app.plist"
 
 if [ ! -f "$ELECTRON" ]; then
-  echo "Electron not found. Run: npm install"
+  echo "Electron binary not found. Run: npm install && node node_modules/electron/install.js"
   exit 1
 fi
 
-# Resolve symlink to the real binary (launchd needs the real path)
-ELECTRON_REAL="$(readlink -f "$ELECTRON" 2>/dev/null || realpath "$ELECTRON")"
+# Already the real binary path (launchd has a minimal PATH and no `node`)
+ELECTRON_REAL="$ELECTRON"
 
 echo "Installing peon-pet LaunchAgent..."
 echo "  App dir:  $SCRIPT_DIR"
