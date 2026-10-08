@@ -10,15 +10,19 @@ that reacts to Claude Code **and** OpenCode sessions.
 
 ## Where we are
 
-- **Branch:** `local/orb-adapters` (local only — **do not push**; `master` is clean).
+- **Remotes:** `origin` = upstream (`PeonPing/peon-pet`); `fork` =
+  `Moe1211/peon-pet` → https://github.com/Moe1211/peon-pet
+- **Branch:** `local/orb-adapters`, pushed to `fork` (tracks
+  `fork/local/orb-adapters`). `master` stays clean at upstream `ca7c312`.
 - **Commits** (on top of upstream `ca7c312`):
   ```
+  eb6ed81 docs: pick-up handoff notes
   9e62010 docs: orb, adapters, tool bridge, waiting latch
   c4c6d9c fix: install.sh Electron binary path for launchd
   7afa3d2 feat: react to non-Claude sessions + OpenCode tool bridge
   ac990e8 feat: JARVIS thinking-orb pet (sprite retired)
   ```
-- Working tree clean. `pick-up.md` (this file) is untracked.
+- Sync upstream: `git fetch origin` → rebase `local/orb-adapters` onto `origin/master`.
 - App running under launchd `com.peonpet.app` (pid changes on restart).
 
 ## How to run / verify
